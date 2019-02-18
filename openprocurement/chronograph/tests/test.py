@@ -4,16 +4,12 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from logging import getLogger
 
-from openprocurement.chronograph.utils import get_manager_for_auction
 from time import sleep
 
 import requests
-from iso8601 import parse_date
 
 from openprocurement.chronograph import TZ
-from openprocurement.chronograph.constants import DEFAULT_STREAMS_DOC, WORKING_DAY_START
 from openprocurement.chronograph.tests.utils import update_json
-from openprocurement.chronograph.scheduler import planning_auction
 from openprocurement.chronograph.tests.base import BaseWebTest, BaseAuctionWebTest
 from openprocurement.chronograph.tests.data import test_bids, test_lots, test_auction_data
 
@@ -51,113 +47,10 @@ class SimpleTest(BaseWebTest):
         self.assertEqual(response.status, '200 OK')
         self.assertNotEqual(response.json, None)
 
-    def test_resync_one(self):
-        response = self.app.get('/resync/all')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-
     def test_recheck_one(self):
         response = self.app.get('/recheck/all')
         self.assertEqual(response.status, '200 OK')
         self.assertEqual(response.json, None)
-
-    def test_calendar(self):
-        response = self.app.get('/calendar')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, [])
-
-    def test_calendar_entry(self):
-        response = self.app.get('/calendar/2015-04-23')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
-        response = self.app.post('/calendar/2015-04-23')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, True)
-        response = self.app.delete('/calendar/2015-04-23')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
-        response = self.app.get('/calendar/2015-04-23')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
-
-    def test_streams(self):
-        # GET /streams
-        response = self.app.get('/streams')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, DEFAULT_STREAMS_DOC['streams'])
-
-        response = self.app.get('/streams?dutch_streams=true')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, DEFAULT_STREAMS_DOC['dutch_streams'])
-
-        response = self.app.get('/streams?texas_streams=true')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, DEFAULT_STREAMS_DOC['texas_streams'])
-
-        # POST /streams
-        response = self.app.post('/streams', {'streams': 20})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, True)
-
-        # GET /streams
-        response = self.app.get('/streams')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, 20)
-
-        # POST /streams
-        response = self.app.post('/streams', {'dutch_streams': 21})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, True)
-
-        # GET /streams
-        response = self.app.get('/streams?dutch_streams=true')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, 21)
-
-        # POST /streams
-        response = self.app.post('/streams', {'texas_streams': 42})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, True)
-
-        # GET /streams
-        response = self.app.get('/streams?texas_streams=true')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, 42)
-
-
-        # POST /streams
-        response = self.app.post('/streams', {'streams': -20})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
-        response = self.app.post('/streams', {'dutch_streams': -20})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
-        response = self.app.post('/streams', {'texas_streams': -20})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
-        response = self.app.post('/streams', {'streams': 11,
-                                              'dutch_streams': 12,
-                                              'texas_streams': 13})
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, True)
-
-        # GET /streams
-        response = self.app.get('/streams')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, 11)
-
-        response = self.app.get('/streams?dutch_streams=true')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, 12)
-
-        response = self.app.get('/streams?texas_streams=true')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, 13)
-
-        # POST /streams
-        response = self.app.patch('/streams')
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, False)
 
 
 class AuctionsTest(BaseAuctionWebTest):
@@ -171,17 +64,6 @@ class AuctionsTest(BaseAuctionWebTest):
         response = self.app.get('/recheck/' + self.auction_id)
         self.assertEqual(response.status, '200 OK')
         self.assertNotEqual(response.json, None)
-        response = self.app.get('/')
-        self.assertEqual(response.status, '200 OK')
-        self.assertIn('jobs', response.json)
-        self.assertEqual(len(response.json['jobs']), 2)
-        self.assertIn("recheck_{}".format(self.auction_id), response.json['jobs'])
-
-    def test_resync_all(self):
-        response = self.app.get('/resync_all')
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        sleep(0.1)
         response = self.app.get('/')
         self.assertEqual(response.status, '200 OK')
         self.assertIn('jobs', response.json)
@@ -261,220 +143,6 @@ class AuctionTest(BaseAuctionWebTest):
         response.json = response.json()
         auction = response.json['data']
         self.assertEqual(auction['status'], 'active.enquiries')
-
-    def test_set_auctionPeriod_jobs(self):
-        now = datetime.now(TZ)
-        response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
-            'data': {
-                "enquiryPeriod": {
-                    "endDate": now.isoformat()
-                },
-                'tenderPeriod': {
-                    'startDate': now.isoformat(),
-                    'endDate': (now + timedelta(days=1)).isoformat()
-                }
-            }
-        })
-        for _ in range(100):
-            self.app.app.registry.scheduler.start()
-            response = self.app.get('/resync_all')
-            self.assertEqual(response.status, '200 OK')
-            self.assertNotEqual(response.json, None)
-            response = self.app.get('/')
-            self.app.app.registry.scheduler.shutdown()
-            self.assertEqual(response.status, '200 OK')
-            self.assertIn('jobs', response.json)
-            self.assertEqual(len(response.json['jobs']), 2)
-            if "recheck_{}".format(self.auction_id) in response.json['jobs']:
-                break
-        self.assertIn("recheck_{}".format(self.auction_id), response.json['jobs'])
-        response = self.app.get('/recheck/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        for _ in range(10):
-            self.app.app.registry.scheduler.start()
-            self.app.get('/resync_all')
-            self.app.app.registry.scheduler.shutdown()
-
-            response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-            response.json = response.json()
-            auction = response.json['data']
-            self.assertEqual(auction['status'], 'active.tendering')
-
-            if self.initial_lots:
-                self.assertIn('auctionPeriod', auction['lots'][0])
-                if 'startDate' in auction['lots'][0]['auctionPeriod']:
-                    break
-            else:
-                self.assertIn('auctionPeriod', auction)
-                if 'startDate' in auction['auctionPeriod']:
-                    break
-        else:
-            response = self.app.get('/resync/' + self.auction_id)
-            self.assertEqual(response.status, '200 OK')
-            self.assertEqual(response.json, None)
-
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        if self.initial_lots:
-            self.assertIn('startDate', auction['lots'][0]['auctionPeriod'])
-        else:
-            self.assertIn('startDate', auction['auctionPeriod'])
-
-    def test_set_auctionPeriod_nextday(self):
-        now = datetime.now(TZ)
-        response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
-            'data': {
-                "enquiryPeriod": {
-                    "endDate": now.isoformat()
-                },
-                'tenderPeriod': {
-                    'startDate': now.isoformat(),
-                    'endDate': (now + timedelta(days=7 - now.weekday())).replace(hour=13).isoformat()
-                }
-            }
-        })
-        response = self.app.get('/recheck/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        response = self.app.get('/resync/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        if self.initial_lots:
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            self.assertEqual(parse_date(auction['lots'][0]['auctionPeriod']['startDate'], TZ).weekday(), 1)
-        else:
-            self.assertIn('auctionPeriod', auction)
-            self.assertEqual(parse_date(auction['auctionPeriod']['startDate'], TZ).weekday(), 1)
-        response = self.app.get('/recheck/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        self.app.app.registry.scheduler.start()
-        response = self.app.get('/')
-        self.assertEqual(response.status, '200 OK')
-        self.assertIn('jobs', response.json)
-        self.assertIn('recheck_{}'.format(self.auction_id), response.json['jobs'])
-        self.assertGreaterEqual(parse_date(response.json['jobs']["recheck_{}".format(self.auction_id)]).utctimetuple(), parse_date(auction['tenderPeriod']['endDate']).utctimetuple())
-        self.assertLessEqual(parse_date(response.json['jobs']["recheck_{}".format(self.auction_id)]).utctimetuple(), (parse_date(auction['tenderPeriod']['endDate']) + timedelta(minutes=5)).utctimetuple())
-
-    def test_set_auctionPeriod_skip_weekend(self):
-        now = datetime.now(TZ)
-        response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
-            'data': {
-                "enquiryPeriod": {
-                    "endDate": now.isoformat()
-                },
-                'tenderPeriod': {
-                    'startDate': now.isoformat(),
-                    'endDate': (now + timedelta(days=5 - now.weekday(), hours=1)).isoformat()
-                }
-            }
-        })
-        response = self.app.get('/recheck/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        response = self.app.get('/resync/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        if self.initial_lots:
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            self.assertEqual(parse_date(auction['lots'][0]['auctionPeriod']['startDate'], TZ).weekday(), 0)
-        else:
-            self.assertIn('auctionPeriod', auction)
-            self.assertEqual(parse_date(auction['auctionPeriod']['startDate'], TZ).weekday(), 0)
-
-    def test_set_auctionPeriod_skip_holidays(self):
-        now = datetime.now(TZ)
-        today = now.date()
-        for i in range(10):
-            date = today + timedelta(days=i)
-            self.app.post('/calendar/' + date.isoformat())
-        calendar = self.app.get('/calendar').json
-        response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
-            'data': {
-                "enquiryPeriod": {
-                    "endDate": now.isoformat()
-                },
-                'tenderPeriod': {
-                    'startDate': now.isoformat(),
-                    'endDate': (now + timedelta(days=1)).isoformat()
-                }
-            }
-        })
-        response = self.app.get('/recheck/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        response = self.app.get('/resync/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        if self.initial_lots:
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            auctionPeriodstart = parse_date(auction['lots'][0]['auctionPeriod']['startDate'], TZ)
-        else:
-            self.assertIn('auctionPeriod', auction)
-            auctionPeriodstart = parse_date(auction['auctionPeriod']['startDate'], TZ)
-        self.assertNotIn(auctionPeriodstart.date().isoformat(), calendar)
-        self.assertTrue(auctionPeriodstart.date() > date)
-
-    def test_set_auctionPeriod_today(self):
-        now = datetime.now(TZ)
-        response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
-            'data': {
-                "enquiryPeriod": {
-                    "endDate": now.isoformat()
-                },
-                'tenderPeriod': {
-                    'startDate': now.isoformat(),
-                    'endDate': (now + timedelta(days=7 - now.weekday())).replace(hour=1).isoformat()
-                }
-            }
-        })
-        response = self.app.get('/recheck/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertNotEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        response = self.app.get('/resync/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.tendering')
-        if self.initial_lots:
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            self.assertEqual(parse_date(auction['lots'][0]['auctionPeriod']['startDate'], TZ).weekday(), 1)
-        else:
-            self.assertIn('auctionPeriod', auction)
-            self.assertEqual(parse_date(auction['auctionPeriod']['startDate'], TZ).weekday(), 1)
 
     def test_switch_to_unsuccessful(self):
         response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
@@ -595,52 +263,6 @@ class AuctionTest3(BaseAuctionWebTest):
         response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
         auction = response.json()['data']
         self.assertEqual(auction['status'], 'active.auction')
-        response = self.app.get('/resync/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        auction = response.json()['data']
-        date_time = TZ.localize(datetime.combine(datetime.now().date(), WORKING_DAY_START))
-        if self.initial_lots:
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            auctionPeriod = auction['lots'][0]['auctionPeriod']['startDate']
-            auction['lots'][0]['auctionPeriod']['startDate'] = date_time.isoformat()
-        else:
-            self.assertIn('auctionPeriod', auction)
-            auctionPeriod = auction['auctionPeriod']['startDate']
-            auction['auctionPeriod']['startDate'] = date_time.isoformat()
-        update_json(self.api, 'auction', self.auction_id, {"data": auction})
-        response = requests.patch('{}/{}'.format(self.app.app.registry.full_url, self.auction_id), {
-            'data': {"id": "f547ece35436484e8656a2988fb52a44"}})
-        self.assertEqual(response.status_code, 200)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        self.assertEqual(auction['status'], 'active.auction')
-        if self.initial_lots:
-            self.assertNotIn('auctionPeriod', auction)
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            self.assertIn('shouldStartAfter', auction['lots'][0]['auctionPeriod'])
-            self.assertIn('startDate', auction['lots'][0]['auctionPeriod'])
-            self.assertGreater(auction['lots'][0]['auctionPeriod']['shouldStartAfter'], auction['lots'][0]['auctionPeriod'].get('startDate'))
-        else:
-            self.assertIn('auctionPeriod', auction)
-            self.assertIn('shouldStartAfter', auction['auctionPeriod'])
-            self.assertIn('startDate', auction['auctionPeriod'])
-            self.assertGreater(auction['auctionPeriod']['shouldStartAfter'], auction['auctionPeriod'].get('startDate'))
-        response = self.app.get('/resync/' + self.auction_id)
-        self.assertEqual(response.status, '200 OK')
-        self.assertEqual(response.json, None)
-        response = requests.get('{}/{}'.format(self.app.app.registry.full_url, self.auction_id))
-        response.json = response.json()
-        auction = response.json['data']
-        if self.initial_lots:
-            self.assertIn('auctionPeriod', auction['lots'][0])
-            self.assertGreater(auction['lots'][0]['auctionPeriod']['startDate'], auctionPeriod)
-        else:
-            self.assertIn('auctionPeriod', auction)
-            self.assertGreater(auction['auctionPeriod']['startDate'], auctionPeriod)
 
 
 class AuctionLotTest3(AuctionTest3):
@@ -655,80 +277,12 @@ class AuctionLotTest4(AuctionTest4):
     initial_lots = test_lots
 
 
-class AuctionPlanning(BaseWebTest):
-    scheduler = False
-
-    def test_auction_quick_planning(self):
-        now = datetime.now(TZ)
-        auctionPeriodstartDate = planning_auction(test_auction_data_test_quick, self.mapper, now, self.db, True)[0]
-        self.assertTrue(now < auctionPeriodstartDate < now + timedelta(hours=1))
-
-    def test_auction_quick_planning_insider(self):
-        now = datetime.now(TZ)
-        my_test_auction = deepcopy(test_auction_data_test_quick)
-        my_test_auction['procurementMethodType'] = 'dgfInsider'
-        auctionPeriodstartDate = planning_auction(
-            my_test_auction, self.mapper, now, self.db, True
-        )[0]
-        self.assertTrue(
-            now < auctionPeriodstartDate < now + timedelta(hours=1)
-        )
-
-    def test_auction_planning_overlow_insider(self):
-        now = datetime.now(TZ)
-        my_test_auction = deepcopy(test_auction_data_test_quick)
-        my_test_auction['procurementMethodType'] = 'dgfInsider'
-        res = planning_auction(my_test_auction, self.mapper, now, self.db)[0]
-        startDate = res.date()
-        count = 0
-        while startDate == res.date():
-            count += 1
-            res = planning_auction(my_test_auction, self.mapper, now, self.db)[0]
-        self.assertEqual(count, 15)
-
-    def test_auction_planning_overlow(self):
-        now = datetime.now(TZ)
-        res = planning_auction(test_auction_data_test_quick, self.mapper, now, self.db)[0]
-        startDate = res.date()
-        count = 0
-        while startDate == res.date():
-            count += 1
-            res = planning_auction(test_auction_data_test_quick, self.mapper, now, self.db)[0]
-        self.assertEqual(count, 100)
-
-    def test_auction_planning_free(self):
-        now = datetime.now(TZ)
-        test_auction_data_test_quick.pop("id")
-        res = planning_auction(test_auction_data_test_quick, self.mapper, now, self.db)[0]
-        startDate, startTime = res.date(), res.time()
-        manager = get_manager_for_auction(test_auction_data, self.mapper)
-        manager.free_slot(self.db, "plantest_{}".format(startDate.isoformat()), "", res)
-        res = planning_auction(test_auction_data_test_quick, self.mapper, now, self.db)[0]
-        self.assertEqual(res.time(), startTime)
-
-    def test_auction_planning_buffer(self):
-        some_date = datetime(2015, 9, 21, 6, 30)
-        date = some_date.date()
-        ndate = (some_date + timedelta(days=1)).date()
-        res = planning_auction(test_auction_data_test_quick, self.mapper, some_date, self.db)[0]
-        self.assertEqual(res.date(), date)
-        some_date = some_date.replace(hour=10)
-        res = planning_auction(test_auction_data_test_quick, self.mapper, some_date, self.db)[0]
-        self.assertNotEqual(res.date(), date)
-        self.assertEqual(res.date(), ndate)
-        some_date = some_date.replace(hour=16)
-        res = planning_auction(test_auction_data_test_quick, self.mapper, some_date, self.db)[0]
-        self.assertNotEqual(res.date(), date)
-        self.assertEqual(res.date(), ndate)
-
-
 def suite():
     tests = unittest.TestSuite()
     tests.addTest(unittest.makeSuite(AuctionLotTest))
     tests.addTest(unittest.makeSuite(AuctionLotTest2))
     tests.addTest(unittest.makeSuite(AuctionLotTest3))
     tests.addTest(unittest.makeSuite(AuctionLotTest4))
-    tests.addTest(unittest.makeSuite(AuctionPlanning))
     tests.addTest(unittest.makeSuite(AuctionTest))
     tests.addTest(unittest.makeSuite(AuctionTest2))
     tests.addTest(unittest.makeSuite(AuctionTest3))

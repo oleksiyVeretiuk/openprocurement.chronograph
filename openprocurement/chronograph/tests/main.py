@@ -2,13 +2,12 @@
 
 import unittest
 
-from openprocurement.chronograph.tests import test, test_scheduler
+from openprocurement.chronograph.tests import test
 
 
 def suite():
     tests = unittest.TestSuite()
     tests.addTest(test.suite())
-    tests.addTest(test_scheduler.suite())
     return tests
 
 
