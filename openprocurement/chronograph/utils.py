@@ -12,16 +12,8 @@ from pytz import timezone
 
 
 from openprocurement.chronograph.constants import (
-    CALENDAR_ID,
-    STREAMS_ID,
-    WORKING_DAY_START,
-    ROUNDING,
-    MIN_PAUSE,
-    BIDDER_TIME,
-    SERVICE_TIME,
     SMOOTHING_MIN,
     SMOOTHING_MAX,
-    DEFAULT_STREAMS_DOC
 )
 
 POOL = Pool(1)
@@ -88,60 +80,6 @@ def randomize(dt):
     return dt + timedelta(seconds=randint(0, 1799))
 
 
-def get_calendar(db, calendar_id=CALENDAR_ID):
-    return db.get(calendar_id, {'_id': calendar_id})
-
-
-def set_holiday(db, day):
-    calendar = get_calendar(db)
-    key = parse_date(day).date().isoformat()
-    calendar[key] = True
-    db.save(calendar)
-
-
-def delete_holiday(db, day):
-    calendar = get_calendar(db)
-    key = parse_date(day).date().isoformat()
-    if key in calendar:
-        calendar.pop(key)
-        db.save(calendar)
-
-
-def get_streams(db, stream_key='streams', streams_id=STREAMS_ID):
-    """
-    Backward compatibility version of managers.BaseAuctionsManager method,
-    which is left due to views.streams_view dependency
-    """
-    streams = db.get(streams_id, deepcopy(DEFAULT_STREAMS_DOC))
-    return streams.get(stream_key, DEFAULT_STREAMS_DOC[stream_key])
-
-
-def set_streams(db, streams=None, stream_key=None, streams_id=STREAMS_ID):
-    streams_doc = db.get(streams_id, deepcopy(DEFAULT_STREAMS_DOC))
-    if streams is not None and stream_key is not None:
-        streams_doc[stream_key] = streams
-    db.save(streams_doc)
-
-
-def calc_auction_end_time(bids, start):
-    end = start + bids * BIDDER_TIME + SERVICE_TIME + MIN_PAUSE
-    seconds = (end - TZ.localize(datetime.combine(end, WORKING_DAY_START))).seconds
-    roundTo = ROUNDING.seconds
-    rounding = (seconds + roundTo - 1) // roundTo * roundTo
-    return (end + timedelta(0, rounding - seconds, -end.microsecond)).astimezone(TZ)
-
-
-def find_free_slot(plan):
-    streams = plan.get('streams', 0)
-    for cur_stream in range(1, streams + 1):
-        stream_id = 'stream_{}'.format(cur_stream)
-        for slot in plan[stream_id]:
-            if plan[stream_id].get(slot) is None:
-                plan_date = parse_date(plan['_id'].split('_')[1] + 'T' + slot, None)
-                plan_date = plan_date.astimezone(TZ) if plan_date.tzinfo else TZ.localize(plan_date)
-                return plan_date, cur_stream
-
-
 def update_next_check_job(next_check, scheduler, auction_id,
                           run_date, recheck_url, check_next_run_time=False):
     next_check = parse_date(next_check, TZ).astimezone(TZ)
@@ -192,14 +130,3 @@ def get_request(url, auth, session, headers=None):
         sleep(tx)
         tx, ty = ty, tx + ty
     return r
-
-
-def get_manager_for_auction(auction, mapper):
-    default_manager = mapper['types'].get('english', None)
-
-    auction_type = auction.get('auctionParameters', {}).get('type', None)
-    if auction_type:
-        return mapper['types'].get(auction_type, default_manager)
-    else:
-        pmt = auction.get('procurementMethodType')
-        return mapper['pmts'].get(pmt, default_manager)
